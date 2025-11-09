@@ -1,0 +1,3 @@
+[workspace]
+members = ["xvm", "xcfc", "xntf", "xyls"]
+resolver = "2"
