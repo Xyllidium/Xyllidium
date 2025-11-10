@@ -8,14 +8,14 @@ def generate_voxel_fig(
     diffusion_map=None,
     flow_vectors=None,
     harmonic_mode=False,
-    mesh_edges=None,
+    xntf_edges=None,
     show_diffusion=True,
     show_flow=True,
-    show_mesh=True,
+    show_xntf=True,
 ):
     energies = np.array(energies)
     nx, ny, nz = energies.shape
-    x, y, z = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz))
+    x, y, z = np.xntfgrid(np.arange(nx), np.arange(ny), np.arange(nz))
     values = energies.flatten()
 
     # --- Color logic ---
@@ -63,7 +63,7 @@ def generate_voxel_fig(
         px, py, pz, radius = pulse_frame
         phi = np.linspace(0, np.pi, 40)
         theta = np.linspace(0, 2 * np.pi, 40)
-        phi, theta = np.meshgrid(phi, theta)
+        phi, theta = np.xntfgrid(phi, theta)
         xs = px + radius * np.sin(phi) * np.cos(theta)
         ys = py + radius * np.sin(phi) * np.sin(theta)
         zs = pz + radius * np.cos(phi)
@@ -83,8 +83,8 @@ def generate_voxel_fig(
         ))
 
     # --- Mesh Links ---
-    if show_mesh and mesh_edges is not None:
-        for e in mesh_edges:
+    if show_xntf and xntf_edges is not None:
+        for e in xntf_edges:
             fig.add_trace(go.Scatter3d(
                 x=[e[0][0], e[1][0]],
                 y=[e[0][1], e[1][1]],
