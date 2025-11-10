@@ -1,0 +1,9 @@
+/* xyllscope/assets/style.css */
+body { background-color: #000; color: #0ff; font-family: Consolas, monospace; }
+.header { text-align: center; color: #00ffff; margin-top: 10px; }
+.container { width: 98%; margin: auto; }
+.row { display: flex; flex-direction: row; gap: 2%; }
+.graph { width: 49%; height: 600px; }
+.intent-box { text-align: center; margin-top: 15px; }
+.button { background-color: #0ff; color: #000; border: none; padding: 10px 15px; margin-left: 10px; cursor: pointer; font-weight: bold; }
+.button:hover { background-color: #09f; }

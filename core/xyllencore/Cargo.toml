@@ -1,0 +1,8 @@
+[package]
+name = "xvm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "xvm"
+path = "src/lib.rs"

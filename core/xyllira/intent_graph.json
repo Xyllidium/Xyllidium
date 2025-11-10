@@ -1,0 +1,62 @@
+{
+  "nodes": [
+    {
+      "id": "Transfer-1",
+      "type": "Transfer",
+      "params": {
+        "from": "wallet.me",
+        "to": "wallet.bob",
+        "amount": 500.0,
+        "unit": "xyls"
+      },
+      "constraints": [
+        {
+          "type": "coherence",
+          "field": "wallet.me",
+          "op": ">",
+          "value": 0.7
+        }
+      ]
+    },
+    {
+      "id": "Evolve-2",
+      "type": "Evolve",
+      "params": {
+        "evolve_target": "core.module"
+      },
+      "constraints": [
+        {
+          "type": "coherence",
+          "field": "governance.field",
+          "op": ">=",
+          "value": 0.85
+        }
+      ]
+    },
+    {
+      "id": "AIInvest-3",
+      "type": "AIInvest",
+      "params": {
+        "delegate": "xyllenai",
+        "strategy": "maximize(coherence(projects))",
+        "amount": 2000.0,
+        "unit": "xyls"
+      },
+      "constraints": []
+    },
+    {
+      "id": "Convert-4",
+      "type": "Convert",
+      "params": {
+        "from": "xyls",
+        "to": "eth",
+        "amount": 100.0,
+        "unit": "xyls",
+        "from_token": "xyls",
+        "to_token": "eth"
+      },
+      "constraints": []
+    }
+  ],
+  "edges": []
+}
