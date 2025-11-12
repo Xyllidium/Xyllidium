@@ -1,157 +1,138 @@
-# ===============================================================
-# 🧠 Xyllidium v4.4 — Xyllenor Equilibrium Engine
-# Modules:
-#   - WebSocket intent processor
-#   - HTTP balance + memory interface
-#   - XAP anchoring (Xyllidium Anchorage Protocol)
-#   - Temporal Memory Decay (neural entropy simulation)
-# ===============================================================
-
+# ~/work/xyllidium/core/xyllenor/engine.py
 import os
 import json
-import asyncio
-import datetime
-import logging
-import threading
 import time
-from flask import Flask, jsonify, request
+import asyncio
+import logging
+import hashlib
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify
 from websockets.server import serve
-import websockets
+import threading
+
+# === Imports from sibling modules (absolute) ===
 from core.xyllenor.xap_handler import make_xap
-from core.xyllenor.temporal_decay import run_decay
-
-# ---------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+from core.xyllenor.timevault_bridge import (
+    list_timevault_files,
+    load_xap,
+    store_xap,
 )
-logger = logging.getLogger("Xyllenor")
 
-# ---------------------------------------------------------------
-# Flask HTTP Interface
-# ---------------------------------------------------------------
-app = Flask(__name__)
+# --- Logging setup ---
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("xyllenor")
+
+# --- Globals ---
 balances = {"alice": 0.0, "bob": 0.0}
-timevault_dir = "data/timevault"
-os.makedirs(timevault_dir, exist_ok=True)
+DATA_DIR = os.path.join(os.path.dirname(__file__), "../../data/timevault")
+os.makedirs(DATA_DIR, exist_ok=True)
 
+# === Flask App ===
+app = Flask("engine")
 
-@app.route("/balance/<name>", methods=["GET"])
-def get_balance(name):
-    bal = balances.get(name, 0.0)
-    return jsonify({name: bal})
+@app.route("/balance/<acct>")
+def balance(acct):
+    """Return current balance for a given account."""
+    return jsonify({"balance": balances.get(acct, 0.0)})
 
+@app.route("/apply_intent", methods=["POST"])
+def apply_intent_http():
+    """HTTP fallback endpoint to apply transfer intents."""
+    try:
+        intent = request.get_json(force=True)
+        if not intent or intent.get("type") != "transfer":
+            return jsonify({"ok": False, "error": "invalid_intent"}), 400
 
-@app.route("/memory/search", methods=["GET"])
+        apply_transfer(intent)
+        xap = make_xap(intent)
+        store_xap(xap)
+        return jsonify({"ok": True, "applied": intent["id"], "xap_id": xap["id"]})
+    except Exception as e:
+        log.exception("Error applying intent")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/memory/search")
 def memory_search():
-    """Return all XAPs optionally filtered by sender ('from' param)."""
-    frm = request.args.get("from")
+    """Search all XAPs anchored from a specific account."""
+    acct = request.args.get("from")
     results = []
-    for f in os.listdir(timevault_dir):
-        if not f.endswith(".json"):
-            continue
-        path = os.path.join(timevault_dir, f)
-        try:
-            xap = json.load(open(path))
-            if frm and xap["intent"]["from"] != frm:
-                continue
-            results.append(xap)
-        except Exception:
-            continue
+    for fn in list_timevault_files():
+        if fn.endswith(".json"):
+            rec = load_xap(fn)
+            if rec and rec["intent"]["from"] == acct:
+                results.append(rec)
     return jsonify(results)
 
+# === WebSocket handler ===
+async def ws_handler(websocket):
+    """Handles live transfer intents from clients."""
+    async for message in websocket:
+        intent = json.loads(message)
+        log.info(f"⚡ received intent: {intent}")
+        if intent["type"] == "transfer":
+            apply_transfer(intent)
+            xap = make_xap(intent)
+            store_xap(xap)
+            ack = {"ok": True, "type": "transfer", "from": intent["from"], "to": intent["to"], "amount": intent["amount"]}
+            await websocket.send(json.dumps(ack))
+            log.info(f"✅ processed transfer {intent['from']} → {intent['to']}, {intent['amount']} xyls")
 
-@app.route("/memory/get/<xap_id>", methods=["GET"])
-def memory_get(xap_id):
-    """Return one specific XAP record."""
-    path = os.path.join(timevault_dir, f"{xap_id}.json")
-    if not os.path.exists(path):
-        return jsonify({"ok": False, "error": "not_found"}), 404
-    return jsonify(json.load(open(path)))
+def apply_transfer(intent):
+    """Apply a transfer intent to balances."""
+    sender, receiver, amt = intent["from"], intent["to"], float(intent["amount"])
+    balances.setdefault(sender, 0.0)
+    balances.setdefault(receiver, 0.0)
+    balances[sender] -= amt
+    balances[receiver] += amt
 
+# === Temporal Memory Decay ===
+def decay_old_xaps():
+    """Removes old non-permanent XAPs from the vault (memory decay)."""
+    now = datetime.utcnow()
+    decay_window = timedelta(minutes=2)  # delete anything older than 2 min if non-permanent
+    decayed = 0
 
-@app.route("/reconstruct/<xap_id>", methods=["GET"])
-def reconstruct_xap(xap_id):
-    """Placeholder for future stub reconstruction."""
-    stub = os.path.join(timevault_dir, f"{xap_id}.stub.json")
-    if not os.path.exists(stub):
-        return jsonify({"ok": False, "error": "no_stub"}), 404
-    return jsonify(json.load(open(stub)))
+    for fn in list_timevault_files():
+        path = os.path.join(DATA_DIR, fn)
+        try:
+            rec = load_xap(fn)
+            if not rec:
+                continue
+            if not rec.get("permanent", False):
+                t = datetime.fromisoformat(rec["timestamp"])
+                if now - t > decay_window:
+                    os.remove(path)
+                    decayed += 1
+        except Exception:
+            continue
+    if decayed > 0:
+        log.info(f"🫧 decayed {decayed} non-permanent XAP(s)")
+    else:
+        log.info(f"🫧 decayed 0 non-permanent XAP(s)")
 
-
-@app.route("/peers", methods=["POST"])
-def register_peers():
-    peers = request.json.get("peers", [])
-    return jsonify({"ok": True, "peers": peers})
-
-# ---------------------------------------------------------------
-# WebSocket Intent Processor
-# ---------------------------------------------------------------
-async def handle_intent(websocket):
-    """Process incoming intents from executor or remote nodes."""
-    try:
-        async for message in websocket:
-            intent = json.loads(message)
-            logger.info(f"⚡ received intent: {intent}")
-            # Basic transfer simulation
-            if intent.get("type") == "transfer":
-                frm, to = intent["from"], intent["to"]
-                amt = float(intent["amount"])
-                balances[frm] = balances.get(frm, 0.0) - amt
-                balances[to] = balances.get(to, 0.0) + amt
-                logger.info(f"✅ processed transfer {frm} → {to}, {amt} xyls")
-                ack = {
-                    "ok": True,
-                    "type": "transfer",
-                    "from": frm,
-                    "to": to,
-                    "amount": amt
-                }
-                await websocket.send(json.dumps(ack))
-                logger.info(f"🔗 Acknowledged by equilibrium engine: {json.dumps(ack)}")
-    except Exception as e:
-        logger.error(f"❌ WebSocket error: {e}")
-
-
-async def ws_server():
-    """Launch the WebSocket listener."""
-    async with serve(handle_intent, "127.0.0.1", 8765):
-        logger.info("✅ WebSocket server active on ws://127.0.0.1:8765")
-        await asyncio.Future()  # keep running
-
-# ---------------------------------------------------------------
-# Background Decay Thread
-# ---------------------------------------------------------------
-def background_decay():
-    """Continuously decay old XAPs to maintain neural equilibrium."""
+def decay_loop():
+    """Run decay periodically in background."""
     while True:
-        time.sleep(600)  # every 10 minutes
-        run_decay("data/timevault")
+        decay_old_xaps()
+        time.sleep(60)
 
-# ---------------------------------------------------------------
-# Main Launcher
-# ---------------------------------------------------------------
-def main():
-    logger.info("WS server → ws://127.0.0.1:8765")
-    logger.info("HTTP read API → http://127.0.0.1:8766")
+# === Startup ===
+async def main():
+    http_port, ws_port = 8766, 8765
+    log.info(f"HTTP read API → http://127.0.0.1:{http_port}")
+    log.info(f"WS server → ws://127.0.0.1:{ws_port}")
 
-    # Start decay thread
-    threading.Thread(target=background_decay, daemon=True).start()
+    # Background thread for decay
+    threading.Thread(target=decay_loop, daemon=True).start()
 
-    # Launch WebSocket + HTTP concurrently
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(ws_server())
-
-    # Run Flask server (non-blocking)
-    from threading import Thread
-    Thread(target=lambda: app.run(port=8766, debug=False, use_reloader=False)).start()
-
-    # Keep loop alive
-    loop.run_forever()
-
+    # Start WebSocket server
+    async with serve(ws_handler, "127.0.0.1", ws_port):
+        log.info(f"✅ WebSocket server active on ws://127.0.0.1:{ws_port}")
+        # Start Flask in a thread
+        threading.Thread(target=lambda: app.run(host="127.0.0.1", port=http_port, use_reloader=False), daemon=True).start()
+        # Keep running forever
+        while True:
+            await asyncio.sleep(10)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -1,35 +1,54 @@
 # ~/work/xyllidium/launch_xyllidium.py
-import subprocess, time, socket
+import os, sys, time, socket, subprocess, signal
 
-def wait_for_port(port, host="127.0.0.1", timeout=15):
-    """Wait until a TCP port is open."""
-    start_time = time.time()
-    while True:
+def wait_for_port(port, host="127.0.0.1", timeout=20, label=""):
+    """Wait until a TCP port is open (up to timeout seconds)."""
+    start = time.time()
+    while time.time() - start < timeout:
         try:
             with socket.create_connection((host, port), timeout=1):
-                print(f"✅ Port {port} is ready.")
+                print(f"✅ Port {port} ready. ({label})")
                 return True
         except OSError:
             time.sleep(0.5)
-        if time.time() - start_time > timeout:
-            print(f"❌ Timeout waiting for port {port}")
-            return False
+    print(f"❌ Timeout waiting for port {port} ({label})")
+    return False
 
 print("🚀 Starting full Xyllidium core stack...\n")
 
-# Step 1: Launch equilibrium engine (Xyllenor)
-engine_proc = subprocess.Popen(["python", "core/xyllenor/engine.py"])
+# Ensure we’re in the project root
+ROOT = os.path.dirname(os.path.abspath(__file__))
+os.chdir(ROOT)
 
-# Wait for WS and HTTP to be ready
-wait_for_port(8765)
-wait_for_port(8766)
+# Make sure Python sees the project root as a package
+env = os.environ.copy()
+env["PYTHONPATH"] = ROOT
 
-# Step 2: Execute sample intent
+# Start the engine as a *module* so relative imports work
+print("🧠 Launching Xyllenor equilibrium engine...")
+engine = subprocess.Popen(
+    [sys.executable, "-m", "core.xyllenor.engine"],
+    env=env,
+    cwd=ROOT
+)
+
+# Wait for the HTTP and WebSocket ports
+wait_for_port(8766, label="HTTP")
+wait_for_port(8765, label="WebSocket")
+
+# Once ready, automatically trigger one test intent
 print("⚙️  Running executor transaction...")
-time.sleep(1)
-subprocess.run(["python", "-m", "core.xyllencore.executor"])
+subprocess.run([sys.executable, "-m", "core.xyllencore.executor"], check=False)
 
 print("\n🟢 Xyllidium core is live.")
 print("Press Ctrl+C to shut down.\n")
 
-engine_proc.wait()
+try:
+    engine.wait()
+except KeyboardInterrupt:
+    print("\n🧩 Shutting down...")
+    try:
+        engine.terminate()
+        engine.wait(timeout=3)
+    except Exception:
+        engine.kill()

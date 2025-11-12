@@ -1,89 +1,48 @@
 # ~/work/xyllidium/core/xyllenor/timevault_bridge.py
-from __future__ import annotations
-import os, json, hashlib
-from typing import Dict, Any
+import os
+import json
+import logging
+from datetime import datetime
 
-BASE_DIR = os.path.expanduser("~/work/xyllidium")
-VAULT_DIR = os.path.join(BASE_DIR, "data", "timevault")
-INDEX_PATH = os.path.join(VAULT_DIR, "index.json")
+log = logging.getLogger("timevault")
 
-os.makedirs(VAULT_DIR, exist_ok=True)
+# Base vault directory
+DATA_DIR = os.path.join(os.path.dirname(__file__), "../../data/timevault")
+os.makedirs(DATA_DIR, exist_ok=True)
 
-def _read_json(p: str) -> Dict[str, Any]:
-    if not os.path.exists(p):
-        return {}
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
 
-def _write_json(p: str, obj: Dict[str, Any]) -> None:
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=2)
-    os.replace(tmp, p)
+def list_timevault_files():
+    """Return list of all XAP and CAP files in the TimeVault directory."""
+    try:
+        return [f for f in os.listdir(DATA_DIR) if f.endswith(".json") or f.endswith(".stub.json")]
+    except FileNotFoundError:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        return []
 
-def store_lattice_snapshot(envelope: Dict[str, Any]) -> str:
-    """Alias: persists CAP envelope file (already done by cap_handler in executor)."""
-    cap_id = envelope["id"]
-    path = os.path.join(VAULT_DIR, f"{cap_id}.json")
-    _write_json(path, envelope)
-    return path
 
-def load_record(cap_id: str) -> Dict[str, Any] | None:
-    path = os.path.join(VAULT_DIR, f"{cap_id}.json")
-    if not os.path.exists(path):
-        return None
-    return _read_json(path)
-
-def read_index() -> Dict[str, Any]:
-    if not os.path.exists(INDEX_PATH):
-        return {"version": "tv.index.v1", "records": []}
-    return _read_json(INDEX_PATH)
-
-def search_by_entropy(entropy_hash: str) -> Dict[str, Any] | None:
-    idx = read_index()
-    for r in reversed(idx["records"]):
-        if r["entropy_hash"] == entropy_hash:
-            return r
-    return None
-
-def reconstruct_from_entropy(entropy_hash: str) -> Dict[str, Any] | None:
-    """
-    Deterministic regeneration approach for volatile entries.
-    Strategy (v1):
-      - Find index record by entropy hash
-      - If CAP file exists, return exact anchor (preferred)
-      - If missing (decayed), regenerate intent envelope (lossless for v1):
-          We hash the canonical intent dict to produce a deterministic TXN id,
-          then rebuild a CAP-like envelope with the same entropy_hash.
-    """
-    rec = search_by_entropy(entropy_hash)
-    if not rec:
+def load_xap(filename):
+    """Load a single XAP or CAP file from TimeVault."""
+    path = os.path.join(DATA_DIR, filename)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        log.warning(f"⚠️ Failed to load {filename}: {e}")
         return None
 
-    # If anchor exists, prefer it (exact)
-    cap_path = os.path.join(VAULT_DIR, f"{rec['cap_id']}.json")
-    if os.path.exists(cap_path):
-        return _read_json(cap_path)
 
-    # Regenerate deterministically (volatile case)
-    intent_core = {
-        "type": rec.get("type"),
-        "from": rec.get("from"),
-        "to": rec.get("to"),
-        "amount": rec.get("amount"),
-        "unit": rec.get("unit"),
-        "memory_mode": rec.get("memory_mode", "volatile"),
-    }
-    # Make a consistent TXN id from the entropy hash subset
-    txn_id = "TXN-" + hashlib.sha1(entropy_hash.encode()).hexdigest()[:8]
-    intent_core["id"] = txn_id
-    # timestamp is not stored for volatile regen; include an approx field
-    envelope = {
-        "id": rec["cap_id"],
-        "timestamp": rec["ts"],         # recorded anchor time from index
-        "intent": intent_core,
-        "entropy_hash": entropy_hash,   # exact match
-        "status": "reconstructed",
-        "version": "cap.v1.replay",
-    }
-    return envelope
+def store_xap(xap):
+    """Store a new XAP record in the TimeVault."""
+    if not isinstance(xap, dict):
+        raise ValueError("XAP must be a dict")
+
+    xap_id = xap.get("id") or f"XAP-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    path = os.path.join(DATA_DIR, f"{xap_id}.json")
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(xap, f, indent=2)
+        log.info(f"📦 Stored XAP snapshot → {path}")
+    except Exception as e:
+        log.error(f"❌ Failed to store XAP: {e}")
+        raise
