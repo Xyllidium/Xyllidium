@@ -1,22 +1,24 @@
+# v3.5.1 XNTF visual layer (surface + heatmap)
 import numpy as np
 import plotly.graph_objects as go
 
-def build_xntf_field(nodes=80):
-    """Simulate XNTF neurofractal field flow (preview build)."""
-    x, y, z = np.random.randn(nodes), np.random.randn(nodes), np.random.randn(nodes)
-    coherence = np.random.rand(nodes)
-    colors = ["rgb(0,255,255)" if c > 0.5 else "rgb(80,80,255)" for c in coherence]
-
+def build_surface(field: np.ndarray) -> go.Figure:
     fig = go.Figure(
-        data=[go.Scatter3d(
-            x=x, y=y, z=z, mode="markers",
-            marker=dict(size=4, color=colors, opacity=0.8),
-            hovertext=[f"Node {i} | Coherence {coherence[i]:.2f}" for i in range(nodes)]
-        )]
+        data=[go.Surface(z=field, showscale=True, opacity=0.96,
+                         colorscale="Viridis")]
     )
-    fig.update_layout(
-        title="XNTF Neurofractal Transmission Field",
-        scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z"),
-        template="plotly_dark"
+    fig.update_scenes(xaxis_visible=False, yaxis_visible=False, zaxis_visible=False)
+    fig.update_layout(margin=dict(l=0,r=0,t=0,b=0), height=420,
+                      paper_bgcolor="black", plot_bgcolor="black")
+    return fig
+
+def build_heatmap(field: np.ndarray) -> go.Figure:
+    fig = go.Figure(
+        data=[go.Heatmap(z=field, colorscale="Viridis", showscale=True)]
     )
+    fig.update_layout(margin=dict(l=10,r=20,t=5,b=5), height=220,
+                      paper_bgcolor="black", plot_bgcolor="black",
+                      xaxis=dict(showgrid=False, color="#00E5FF"),
+                      yaxis=dict(showgrid=False, color="#00E5FF"),
+                      title="Temporal Coherence Index", titlefont_color="#00E5FF")
     return fig

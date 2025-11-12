@@ -1,0 +1,18 @@
+{
+  "id": "CAP-e04ccdc6d1cf",
+  "timestamp": "2025-11-11T10:17:17.185253+00:00",
+  "intent": {
+    "id": "TXN-25d0d381",
+    "type": "transfer",
+    "from": "alice",
+    "to": "bob",
+    "amount": 500.0,
+    "unit": "xyls",
+    "timestamp": "2025-11-11T15:47:17",
+    "permanent": true
+  },
+  "entropy_hash": "e04ccdc6d1cfb19ee8d5a6781262fe04f504e4d86317a7784e4717dca134ed40",
+  "status": "pending",
+  "version": "cap.v1",
+  "permanent": true
+}

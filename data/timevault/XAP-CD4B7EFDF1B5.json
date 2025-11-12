@@ -1,0 +1,21 @@
+{
+  "id": "XAP-CD4B7EFDF1B5",
+  "timestamp": "2025-11-11T19:56:04.012031",
+  "intent": {
+    "id": "XYLL-TXN-6A0ADF77",
+    "type": "transfer",
+    "from": "alice",
+    "to": "bob",
+    "amount": 500.0,
+    "unit": "xyls",
+    "timestamp": "2025-11-11T19:56:03.998952",
+    "permanent": true
+  },
+  "entropy_hash": "XYLL-ENTR-CD4B7EFDF1B5C3B48A4B6FC367D56D7535FB04978E61017E6A21B468E2210517",
+  "status": "anchored",
+  "version": "xap.v1",
+  "permanent": true,
+  "signer": "NODE-26AB7B",
+  "public_key": "XYLL-PUB-67C0DBCF1BE32CC777CB6FC383A02E32B295316001A3B3A915CB724BE48078B3",
+  "signature": "XYLL-SIG-05BBE79A790FA721FCE9714FACD1DB608BA71AAB7E72A27495DC7DBDDDF129565A9A8403E357F3460DFEC3F1F0ECEFC4B214AA4A273F15A532BE761C3B137C01"
+}

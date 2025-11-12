@@ -1,0 +1,15 @@
+{
+  "id": "CAP-181c2c418fc2",
+  "entropy_hash": "366cfc87d6916c74738e807c94f8704e772a512bea51b16ee80b58b952271658",
+  "decayed_at": "2025-11-11T10:15:59.352757+00:00",
+  "version": "cap.v1",
+  "status": "decayed",
+  "permanent": false,
+  "hint": {
+    "type": "transfer",
+    "from": "alice",
+    "to": "bob",
+    "unit": "xyls",
+    "amount": 500.0
+  }
+}

@@ -1,202 +1,101 @@
+# Xyllscope v3.1-Stable Restoration (Cognitive Field Monitor)
+# Combines visuals of v2.3 + renderer patch of v3.5.8.1
+# Works on Dash>=8, NumPy>=1.26
 
-import dash
-from dash import dcc, html, Input, Output
-import dash_bootstrap_components as dbc
-import dash_daq as daq
-import numpy as np
-import plotly.graph_objs as go
-import asyncio, threading, websockets, json
-from datetime import datetime
+import os, json, threading, asyncio
 from collections import deque
-from components.equilibrium_panel import layout as equilibrium_layout, make_flux_wave
+from datetime import datetime
+import numpy as np
+import plotly.graph_objects as go
+import dash
+from dash import dcc, html, Output, Input
+import dash_bootstrap_components as dbc
 
-# ---- Global Config ----
-GRID = 8
-MAX_HISTORY = 60
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
-app.title = "Xyllscope v3.3 – Cognitive Aura Edition"
-app.config.suppress_callback_exceptions = True
+# --- configuration ---
+GRID = (16,16)
+state = dict(Z=np.zeros(GRID), hist=deque(maxlen=300), ai=[], tick=0, connected=False)
 
-# ---- State ----
-state = {
-    "energies": np.random.rand(GRID, GRID, GRID),
-    "pulses": [],
-    "ai_stream": deque(maxlen=200),
-    "history_coh": deque(maxlen=MAX_HISTORY),
-    "tick": 0,
-    "ws_connected": False,
-}
+# --- utilities ---
+def ts(): return datetime.now().strftime("%H:%M:%S")
+def log(msg): state["ai"].append(f"[{ts()}] {msg}")
 
-# ---- Equilibrium Feed ----
-latest_metrics = {}
-history_metrics = deque(maxlen=10)
+def coherence(Z):
+    m,s=np.mean(Z),np.std(Z)
+    return float(max(0,min(1,1-s/(m+1e-9))))
 
-# ---- Helper Functions ----
-def build_volume_figure(field, pulses):
-    """
-    Volumetric cognitive aura visualization.
-    Replaces scatter points with smooth coherence cloud.
-    """
-    from plotly.colors import sample_colorscale
-
-    # Flatten grid into coordinates + energy values
-    energy = field.flatten()
-    coords = np.indices(field.shape).reshape(3, -1).T
-
-    # Normalize energy
-    norm = (energy - energy.min()) / (energy.max() - energy.min() + 1e-9)
-
-    # Dynamic threshold — aura breathes with coherence
-    coh = coherence_index(field)
-    iso_min = np.percentile(energy, 60 - 20 * (coh - 0.5))  # coherence controls transparency
-    iso_max = energy.max()
-
-    # Generate volumetric aura
-    fig = go.Figure(data=[
-        go.Volume(
-            x=coords[:, 0], y=coords[:, 1], z=coords[:, 2],
-            value=energy,
-            isomin=iso_min,
-            isomax=iso_max,
-            opacity=0.1 + coh * 0.3,  # more coherence = brighter aura
-            surface_count=20,
-            colorscale="Electric"
-        )
-    ])
-
-    # Black background, centered layout
-    fig.update_layout(
-        scene=dict(
-            bgcolor="black",
-            xaxis=dict(visible=False),
-            yaxis=dict(visible=False),
-            zaxis=dict(visible=False),
-        ),
-        margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor="black",
-        plot_bgcolor="black"
-    )
-
+# --- visuals ---
+def surface(Z):
+    fig=go.Figure(go.Surface(z=Z,colorscale="Viridis",opacity=0.85,
+                             showscale=True,lighting={"ambient":0.6}))
+    fig.update_layout(scene=dict(
+        xaxis=dict(visible=False),yaxis=dict(visible=False),
+        zaxis=dict(visible=False),aspectmode="cube",
+        camera=dict(eye=dict(x=1.4,y=1.4,z=1.1))),
+        margin=dict(l=10,r=10,t=10,b=10),
+        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)")
     return fig
 
-
-def build_heatmap(field):
-    heat = field.mean(axis=2)
-    fig = go.Figure(data=[go.Heatmap(z=heat, colorscale="Viridis")])
-    fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20))
+def heat(Z):
+    fig=go.Figure(go.Heatmap(z=Z,colorscale="Turbo",showscale=False))
+    fig.update_layout(margin=dict(l=10,r=10,t=20,b=20),
+                      paper_bgcolor="rgba(0,0,0,0)",
+                      plot_bgcolor="rgba(0,0,0,0)",height=220)
     return fig
 
-def build_temporal(history):
-    fig = go.Figure(data=[go.Scatter(y=list(history), mode="lines", line=dict(color="#00FFFF"))])
-    fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20))
+def line(y):
+    fig=go.Figure(go.Scatter(y=y,mode="lines",line=dict(color="#00FFFF",width=2)))
+    fig.update_layout(margin=dict(l=10,r=10,t=20,b=20),
+                      paper_bgcolor="rgba(0,0,0,0)",
+                      plot_bgcolor="rgba(0,0,0,0)",height=200)
     return fig
 
-def coherence_index(field):
-    mean_val = np.mean(field)
-    var_val = np.var(field)
-    return np.exp(-var_val / (mean_val + 1e-9))
+# --- mock update loop ---
+def offline_step():
+    Z=state["Z"]
+    wave=np.sin(0.1*state["tick"]+np.linspace(0,3.14,GRID[0]))[None,:]
+    Z=0.9*Z+0.1*wave
+    state["Z"]=np.clip(Z,0,1)
 
-def add_pulse(x, y, z, intensity):
-    x, y, z = int(x), int(y), int(z)
-    state["pulses"].append({"x": x, "y": y, "z": z, "intensity": float(intensity)})
+# --- dash app ---
+app=dash.Dash(__name__,external_stylesheets=[dbc.themes.CYBORG],
+              title="Xyllscope – Cognitive Field Monitor")
 
-def append_ai(text: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    state["ai_stream"].append(f"[{ts}] {text}")
+app.index_string="""
+<!DOCTYPE html>
+<html>
+  <head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}</head>
+  <body style="background-color:#000;">
+    {%app_entry%}
+    <footer>{%config%}{%scripts%}{%renderer%}</footer>
+  </body>
+</html>"""
 
-# ---- Async WebSocket ----
-async def listen_bridge():
-    uri = "ws://127.0.0.1:8765"
-    global latest_metrics, history_metrics
-    try:
-        async with websockets.connect(uri) as ws:
-            state["ws_connected"] = True
-            append_ai("Connected to bridge.")
-            while True:
-                msg = await ws.recv()
-                data = json.loads(msg)
-                if data.get("type") == "energy_update":
-                    state["energies"] = np.array(data["energies"])
-                elif data.get("type") == "xyllenor_metrics":
-                    latest_metrics = data["data"]
-                    history_metrics.append(latest_metrics)
-    except Exception as e:
-        append_ai(f"Bridge connection failed: {e}")
-        state["ws_connected"] = False
+app.layout=dbc.Container([
+    html.H1("🧠 Xyllscope – Cognitive Field Monitor",
+            style={"color":"#6ee7ff","marginTop":"10px"}),
+    dbc.Row([
+        dbc.Col(dbc.Button("Start/Stop",id="btn",color="danger",outline=True,size="sm")),
+    ]),
+    dbc.Row([
+        dbc.Col(dcc.Graph(id="surf",figure=surface(state["Z"])),md=7),
+        dbc.Col([dcc.Graph(id="heat",figure=heat(state["Z"])),
+                 dcc.Graph(id="line",figure=line([]))],md=5)
+    ],className="mt-3"),
+    html.Pre(id="ai",style={"height":"160px","overflowY":"auto"}),
+    html.Div(id="status",style={"color":"#6ee7ff"}),
+    dcc.Interval(id="tick",interval=900,n_intervals=0)
+],fluid=True)
 
-def start_ws_thread():
-    threading.Thread(target=lambda: asyncio.run(listen_bridge()), daemon=True).start()
+@app.callback(Output("surf","figure"),Output("heat","figure"),
+              Output("line","figure"),Output("ai","children"),
+              Output("status","children"),
+              Input("tick","n_intervals"))
+def update(_):
+    offline_step()
+    state["tick"]+=1
+    coh=coherence(state["Z"]); state["hist"].append(coh)
+    return (surface(state["Z"]),heat(state["Z"]),line(state["hist"]),
+            "\n".join(state["ai"][-200:]),f"Tick {state['tick']} | coherence {coh:.3f}")
 
-# ---- Dash Layout ----
-app.layout = dbc.Container(
-    [
-        html.H2("🌌 Xyllscope v3.2 – Cognitive Field Monitor", 
-                style={"textAlign": "center", "marginTop": "20px"}),
-        html.Div(id="ws-status", style={"textAlign": "center", "color": "#00FFFF"}),
-        dbc.Row([
-            dbc.Col(dcc.Graph(id="voxel-view", style={"height": "500px"}), width=6),
-            dbc.Col(dcc.Graph(id="heatmap", style={"height": "500px"}), width=6),
-        ]),
-        dbc.Row([
-            dbc.Col(dcc.Graph(id="temporal-coherence", style={"height": "300px"}), width=12)
-        ]),
-        html.Hr(),
-        equilibrium_layout(),  # ⚖️ attach equilibrium panel here
-        html.Hr(),
-        html.Pre(id="ai-console", style={
-            "backgroundColor": "#000", "color": "#0FF", "padding": "10px",
-            "height": "200px", "overflowY": "scroll", "borderRadius": "8px"
-        }),
-        dcc.Interval(id="interval-component", interval=2000, n_intervals=0)
-    ],
-    fluid=True,
-)
-
-# ---- Callbacks ----
-@app.callback(
-    [
-        Output("voxel-view", "figure"),
-        Output("heatmap", "figure"),
-        Output("temporal-coherence", "figure"),
-        Output("ai-console", "children"),
-        Output("ws-status", "children"),
-        Output("entropy-gauge", "value"),
-        Output("balance-gauge", "value"),
-        Output("flux-gauge", "value"),
-        Output("flux-wave", "figure"),
-        Output("metrics-log", "children"),
-    ],
-    Input("interval-component", "n_intervals")
-)
-def update_visuals(_):
-    # compute coherence + pulses
-    coh = coherence_index(state["energies"])
-    state["history_coh"].append(coh)
-    state["tick"] += 1
-
-    # visuals
-    vol = build_volume_figure(state["energies"], state["pulses"])
-    hm = build_heatmap(state["energies"])
-    tt = build_temporal(state["history_coh"])
-    console = "\n".join(list(state["ai_stream"])[-20:])
-    ws_txt = f"{'🔌 Connected' if state['ws_connected'] else '⚠️ Disconnected'} — tick {state['tick']} — coherence {coh:.3f}"
-
-    # equilibrium metrics (if present)
-    if latest_metrics:
-        ent = latest_metrics.get("entropy", 0)
-        bal = latest_metrics.get("balance_index", 1)
-        flux = latest_metrics.get("flux_rate", 0)
-        flux_fig = make_flux_wave(history_metrics)
-        log = json.dumps(latest_metrics, indent=2)
-    else:
-        ent, bal, flux = 0, 1, 0
-        flux_fig, log = make_flux_wave([]), "Awaiting Xyllenor data..."
-
-    return vol, hm, tt, console, ws_txt, ent, bal, flux, flux_fig, log
-
-
-# ---- Start Background ----
-start_ws_thread()
-
-if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8050, debug=True)
+if __name__=="__main__":
+    app.run(host="127.0.0.1",port=8050,debug=True)

@@ -1,25 +1,27 @@
-#!/bin/bash
-# ============================================================
-# Xyllidium Unified Launcher
-# Starts Bridge → Executor → Xyllscope automatically
-# ============================================================
+#!/usr/bin/env bash
+# v3.5.5 Orchestrator — launch Bridge, Engine, Scope
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-PROJECT_DIR=~/work/xyllidium
-VENV=$PROJECT_DIR/.venv/bin/activate
+source "$ROOT/.venv/bin/activate"
 
-echo "🔋 Activating environment..."
-source $VENV
+# logs
+mkdir -p "$ROOT/logs"
+: > "$ROOT/logs/bridge.log"
+: > "$ROOT/logs/engine.log"
+: > "$ROOT/logs/scope.log"
 
-# --- Start Bridge Server ---
-echo "🌐 Starting Bridge Server..."
-python $PROJECT_DIR/core/xyllencore/bridge_server.py &
-sleep 2
+echo "[orchestrator] launching Bridge…"
+nohup python "$ROOT/core/xyllencore/bridge_server.py" > "$ROOT/logs/bridge.log" 2>&1 & echo $! > "$ROOT/logs/bridge.pid"
+sleep 0.8
 
-# --- Start Executor ---
-echo "⚙️ Starting Xyllencore Executor..."
-python $PROJECT_DIR/core/xyllencore/executor.py &
-sleep 3
+echo "[orchestrator] launching Xyllenor engine…"
+nohup python "$ROOT/core/xyllenor/engine.py" > "$ROOT/logs/engine.log" 2>&1 & echo $! > "$ROOT/logs/engine.pid"
+sleep 0.8
 
-# --- Start Xyllscope Interface ---
-echo "🧠 Launching Xyllscope Dashboard..."
-python $PROJECT_DIR/interface/xyllscope/app.py
+echo "[orchestrator] launching Xyllscope…"
+nohup python "$ROOT/interface/xyllscope/app.py" > "$ROOT/logs/scope.log" 2>&1 & echo $! > "$ROOT/logs/scope.pid"
+
+echo "[orchestrator] All services up."
+echo "Bridge:   ws://127.0.0.1:8765"
+echo "Xyllscope http://127.0.0.1:8050"

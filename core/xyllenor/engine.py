@@ -1,64 +1,74 @@
-"""
-Xyllenor Core – Equilibrium Engine v1.0
-Part of Xyllidium Coherence Organism
-Maintains systemic balance between energy, coherence, and entropy.
-"""
-
-import json
-import time
-import random
-import asyncio
+# ~/work/xyllidium/core/xyllenor/engine.py
+import asyncio, json, os, logging, threading
+from flask import Flask, jsonify, request
 import websockets
-from statistics import mean, pstdev
+from datetime import datetime
+from core.xyllenor.xap_handler import make_xap
 
-class Xyllenor:
-    def __init__(self):
-        self.metrics = {
-            "entropy": 0.0,
-            "balance_index": 1.0,
-            "flux_rate": 0.0,
-            "coherence_mean": 0.0,
-            "timestamp": time.time()
-        }
-        self.history = []
-        self.websocket_uri = "ws://127.0.0.1:8765"  # Same bridge as Xyllscope
-        print("🧠 Xyllenor equilibrium engine initialized...")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("xyllenor")
 
-    # --- Simulated input from Xyllencore ---
-    def ingest_state(self, state):
-        # Expecting wallet balances, coherence data, etc.
-        energy_levels = [v for v in state["wallets"].values()]
-        entropy = pstdev(energy_levels) / (mean(energy_levels) + 1e-9)
-        self.metrics["entropy"] = round(entropy, 3)
-        self.metrics["coherence_mean"] = round(mean(energy_levels), 3)
-        self.metrics["balance_index"] = round(1.0 - min(entropy, 1.0), 3)
-        self.metrics["flux_rate"] = round(random.uniform(0.01, 0.15), 3)
-        self.metrics["timestamp"] = time.time()
-        self.history.append(self.metrics.copy())
+app = Flask(__name__)
 
-    async def broadcast(self):
-        async with websockets.connect(self.websocket_uri) as ws:
-            await ws.send(json.dumps({"type": "xyllenor_metrics", "data": self.metrics}))
-            print("📡 Sent equilibrium update:", self.metrics)
+BALANCES = {"alice": 0.0, "bob": 0.0}
+TIMEVAULT_DIR = "data/timevault"
+os.makedirs(TIMEVAULT_DIR, exist_ok=True)
 
-    def evaluate_equilibrium(self, state):
-        self.ingest_state(state)
-        return self.metrics
+# ---------- WebSocket handler ----------
+async def handle_ws(websocket):
+    async for message in websocket:
+        try:
+            intent = json.loads(message)
+            logger.info(f"⚡ received intent: {intent}")
+            if intent["type"] == "transfer":
+                amt = float(intent["amount"])
+                BALANCES[intent["from"]] -= amt
+                BALANCES[intent["to"]] += amt
+                await websocket.send(json.dumps({
+                    "ok": True,
+                    "type": "transfer",
+                    "from": intent["from"],
+                    "to": intent["to"],
+                    "amount": amt
+                }))
+                logger.info(f"✅ processed transfer {intent['from']} → {intent['to']}, {amt} xyls")
+                make_xap(intent)
+        except Exception as e:
+            logger.error(f"❌ WS processing error: {e}")
 
-    async def run(self):
-        while True:
-            # Simulate periodic update
-            mock_state = {
-                "wallets": {
-                    "wallet.me": random.uniform(5000, 10000),
-                    "wallet.bob": random.uniform(2000, 5000)
-                }
-            }
-            metrics = self.evaluate_equilibrium(mock_state)
-            await self.broadcast()
-            await asyncio.sleep(3)
+async def start_ws():
+    async with websockets.serve(handle_ws, "127.0.0.1", 8765):
+        logger.info("✅ WebSocket server active on ws://127.0.0.1:8765")
+        await asyncio.Future()  # run forever
 
+# ---------- Flask routes ----------
+@app.route("/balance/<user>")
+def balance(user):
+    return jsonify({user: BALANCES.get(user, 0.0)})
+
+@app.route("/memory/search")
+def memory_search():
+    frm = request.args.get("from")
+    results = []
+    for fn in os.listdir(TIMEVAULT_DIR):
+        if fn.endswith(".json"):
+            data = json.load(open(os.path.join(TIMEVAULT_DIR, fn)))
+            if data["intent"]["from"] == frm:
+                results.append(data)
+    return jsonify(results)
+
+# ---------- Start servers in parallel ----------
+def run_flask():
+    logger.info("HTTP read API → http://127.0.0.1:8766")
+    app.run(host="127.0.0.1", port=8766, use_reloader=False)
+
+def run_ws():
+    logger.info("WS server → ws://127.0.0.1:8765")
+    asyncio.run(start_ws())
+
+def main():
+    threading.Thread(target=run_flask, daemon=True).start()
+    run_ws()  # main thread handles WebSocket loop
 
 if __name__ == "__main__":
-    engine = Xyllenor()
-    asyncio.run(engine.run())
+    main()
